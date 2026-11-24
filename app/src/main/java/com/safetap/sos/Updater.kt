@@ -52,8 +52,8 @@ object Updater {
                 when (conn.responseCode) {
                     200 -> {}
                     404 -> return@withContext UpdateResult.Error("No release has been published yet.")
-                    403, 429 -> return@withContext UpdateResult.Error("GitHub is limiting requests right now. Try again later.")
-                    else -> return@withContext UpdateResult.Error("GitHub answered with error ${conn.responseCode}.")
+                    403, 429 -> return@withContext UpdateResult.Error("The update server is busy. Try again later.")
+                    else -> return@withContext UpdateResult.Error("The update server answered with error ${conn.responseCode}.")
                 }
                 val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
                 val tag = json.optString("tag_name")
@@ -78,12 +78,12 @@ object Updater {
                 }
                 val size = a.optLong("size", -1)
                 if (size > MAX_APK_BYTES) return@withContext UpdateResult.Error("The update file is unexpectedly large.")
-                UpdateResult.Available(UpdateInfo(tag.removePrefix("v"), json.optString("body").take(600), a.getString("browser_download_url"), sha.lowercase(), size))
+                UpdateResult.Available(UpdateInfo(tag.removePrefix("v"), cleanNotes(json.optString("body")), a.getString("browser_download_url"), sha.lowercase(), size))
             } finally {
                 conn.disconnect()
             }
         } catch (e: IOException) {
-            UpdateResult.Error("Couldn't reach GitHub. Check the internet connection.")
+            UpdateResult.Error("Couldn't check for updates. Check the internet connection.")
         } catch (e: Exception) {
             UpdateResult.Error("Couldn't read the update information.")
         }
@@ -147,6 +147,13 @@ object Updater {
 
     // ---- helpers ----
 
+    /** Shows only plain release text: drops links and auto-generated hosting boilerplate. */
+    internal fun cleanNotes(body: String): String = body.lines()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && !it.contains("http", true) && !it.contains("github", true) &&
+            !it.contains("changelog", true) && !it.startsWith("#") }
+        .joinToString("\n").take(400)
+
     internal fun isNewer(remote: String, local: String): Boolean {
         fun parts(v: String) = v.trim().removePrefix("v").substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
         val r = parts(remote); val l = parts(local)
@@ -165,7 +172,7 @@ object Updater {
 
     private fun open(url: String): HttpURLConnection {
         val u = URL(url)
-        require(allowedHost(u)) { "Blocked non-GitHub address." }
+        require(allowedHost(u)) { "Blocked an untrusted address." }
         return (u.openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000; readTimeout = 30_000
             setRequestProperty("User-Agent", "PocketGuardian-Updater")

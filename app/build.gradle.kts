@@ -15,6 +15,8 @@ android {
         versionCode = (findProperty("appVersionCode") as String?)?.toInt() ?: 1
         versionName = (findProperty("appVersionName") as String?) ?: "1.0.0"
         // GitHub "owner/repo" that publishes releases for in-app updates (set in gradle.properties).
+        // Optional price text shown on the payment screen, e.g. -PlicensePrice="PHP 299". Blank = ask via Messenger.
+        buildConfigField("String", "LICENSE_PRICE", "\"${findProperty("licensePrice") ?: ""}\"")
         buildConfigField("String", "UPDATE_REPO", "\"${findProperty("updateRepo") ?: "your-github-user/pocket-guardian"}\"")
     }
     signingConfigs {

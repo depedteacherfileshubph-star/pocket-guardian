@@ -25,19 +25,19 @@ fun UpdateScreen(vm: AppViewModel) {
         Text("Installed version: ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
 
         Section("How updates work") {
-            Text("This is the only part of Pocket Guardian that uses the internet. It asks GitHub whether a newer release exists, only when you press the button (or if you turn on the option below).", style = MaterialTheme.typography.bodyLarge)
-            Text("Nothing about you, the child, contacts or location is sent. GitHub can see the phone's internet address, like any website.", style = MaterialTheme.typography.bodyMedium)
+            Text("This is the only part of Pocket Guardian that uses the internet. It asks an update server whether a newer version exists, only when you press the button (or if you turn on the option below).", style = MaterialTheme.typography.bodyLarge)
+            Text("Nothing about you, the child, contacts or location is sent. The update server can see the phone's internet address, like any website.", style = MaterialTheme.typography.bodyMedium)
             Text("Updates never install silently: the file's checksum and signing key are checked, then Android asks you to confirm the install.", style = MaterialTheme.typography.bodyMedium)
         }
 
         if (!Updater.configured()) {
-            StatusBanner("Not set up", "This build has no GitHub repository configured, so updates are unavailable. See the README (Updates).", false)
+            StatusBanner("Not set up", "This build has no update source configured, so updates are unavailable.", false)
         } else {
             status?.let { StatusBanner("Update", it, null) }
 
             if (info == null) {
                 BigButton(if (busy) "Checking..." else "Check for updates", {
-                    busy = true; status = "Checking GitHub..."
+                    busy = true; status = "Checking for updates..."
                     scope.launch {
                         when (val r = Updater.check()) {
                             is UpdateResult.Available -> { vm.updateAvailable = r.info; status = "Version ${r.info.version} is available." }

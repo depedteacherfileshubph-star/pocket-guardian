@@ -56,4 +56,4 @@ jobs:
           sha256sum PocketGuardian-${GITHUB_REF_NAME#v}.apk | cut -d' ' -f1 > PocketGuardian-${GITHUB_REF_NAME#v}.apk.sha256
       - name: Publish release
         env: { GH_TOKEN: "${{ github.token }}" }
-        run: gh release create "$GITHUB_REF_NAME" PocketGuardian-*.apk PocketGuardian-*.apk.sha256 --generate-notes --title "$GITHUB_REF_NAME"
+        run: gh release create "$GITHUB_REF_NAME" PocketGuardian-*.apk PocketGuardian-*.apk.sha256 --notes "Pocket Guardian ${GITHUB_REF_NAME#v}" --title "$GITHUB_REF_NAME"

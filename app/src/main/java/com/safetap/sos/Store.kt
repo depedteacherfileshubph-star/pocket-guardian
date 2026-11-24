@@ -15,20 +15,33 @@ sealed interface PinResult {
     data class Locked(val remainingMs: Long) : PinResult
 }
 
-/** App-private storage, excluded from backup. Holds only: settings, contacts, PIN hash. */
+/** App-private storage, excluded from backup. Holds only: settings, contacts, PIN hash, licence state. */
 class Store(context: Context) {
     private val sp = context.applicationContext.getSharedPreferences("safetap", Context.MODE_PRIVATE)
 
     fun loadConfig(): SosConfig {
         val d = SosConfig()
+        val pattern = runCatching { PatternType.valueOf(sp.getString("pattern", null) ?: "") }.getOrDefault(d.pattern)
+
+        var mappings = parseMappings(sp.getString("mappings", null))
+        var buttonActions = sp.getInt("buttonActions", -1)
+        if (mappings == null) {
+            // Settings saved by version 1.0.x: one press count with SMS / call / alarm switches.
+            val old = (if (sp.getBoolean("sendSms", true)) Act.SMS else 0) or
+                (if (sp.getBoolean("placeCall", false)) Act.CALL else 0) or
+                (if (sp.getBoolean("alarm", false)) Act.ALARM else 0)
+            val count = sp.getInt("pressCount", 5).coerceIn(Limits.MIN_PRESSES, Limits.MAX_PRESSES)
+            mappings = mapOf(count to old)
+            if (buttonActions < 0) buttonActions = if (old == 0) Act.SMS else old
+        }
+        if (buttonActions <= 0) buttonActions = d.buttonActions
+
         return SosConfig(
             enabled = sp.getBoolean("enabled", d.enabled),
-            pattern = runCatching { PatternType.valueOf(sp.getString("pattern", null) ?: "") }.getOrDefault(d.pattern),
-            pressCount = sp.getInt("pressCount", d.pressCount).coerceIn(Limits.MIN_PRESSES, Limits.MAX_PRESSES),
+            pattern = pattern,
+            mappings = mappings,
             windowMs = sp.getLong("windowMs", d.windowMs),
-            sendSms = sp.getBoolean("sendSms", d.sendSms),
-            placeCall = sp.getBoolean("placeCall", d.placeCall),
-            alarm = sp.getBoolean("alarm", d.alarm),
+            buttonActions = buttonActions,
             callContactId = sp.getString("callContactId", null),
             graceSeconds = sp.getInt("graceSeconds", d.graceSeconds),
             message = sp.getString("message", d.message) ?: d.message,
@@ -41,13 +54,23 @@ class Store(context: Context) {
     fun saveConfig(c: SosConfig) {
         sp.edit()
             .putBoolean("enabled", c.enabled).putString("pattern", c.pattern.name)
-            .putInt("pressCount", c.pressCount).putLong("windowMs", c.windowMs)
-            .putBoolean("sendSms", c.sendSms).putBoolean("placeCall", c.placeCall)
-            .putBoolean("alarm", c.alarm).putString("callContactId", c.callContactId)
+            .putString("mappings", c.mappings.entries.joinToString(",") { "${it.key}:${it.value}" })
+            .putLong("windowMs", c.windowMs).putInt("buttonActions", c.buttonActions)
+            .putString("callContactId", c.callContactId)
             .putInt("graceSeconds", c.graceSeconds).putString("message", c.message)
             .putBoolean("includeLocation", c.includeLocation).putBoolean("keepScreenOn", c.keepScreenOn)
             .putBoolean("backgroundMode", c.backgroundMode)
             .apply()
+    }
+
+    private fun parseMappings(s: String?): Map<Int, Int>? {
+        if (s == null) return null
+        return s.split(",").mapNotNull {
+            val p = it.split(":")
+            val k = p.getOrNull(0)?.toIntOrNull()
+            val v = p.getOrNull(1)?.toIntOrNull()
+            if (k != null && v != null && k in Limits.MIN_PRESSES..Limits.MAX_PRESSES) k to v else null
+        }.toMap()
     }
 
     fun loadContacts(): List<Contact> {
@@ -71,10 +94,24 @@ class Store(context: Context) {
         get() = sp.getBoolean("bgVerified", false)
         set(v) { sp.edit().putBoolean("bgVerified", v).apply() }
 
-    /** Opt-in: check GitHub for a newer release when Guardian settings opens. Off by default. */
+    /** Opt-in: check for a newer version when Guardian settings opens. Off by default. */
     var autoUpdateCheck: Boolean
         get() = sp.getBoolean("autoUpdate", false)
         set(v) { sp.edit().putBoolean("autoUpdate", v).apply() }
+
+    // ---- Licence / trial ----
+    var trialStart: Long
+        get() = sp.getLong("trialStart", 0L)
+        set(v) { sp.edit().putLong("trialStart", v).apply() }
+
+    /** Latest clock reading seen; stops the trial being extended by turning the clock back. */
+    var lastSeen: Long
+        get() = sp.getLong("lastSeen", 0L)
+        set(v) { sp.edit().putLong("lastSeen", v).apply() }
+
+    var licenseCode: String
+        get() = sp.getString("licenseCode", "") ?: ""
+        set(v) { sp.edit().putString("licenseCode", v).apply() }
 
     // ---- Guardian PIN (salted PBKDF2; never stored in clear) ----
     fun hasPin() = sp.contains("pinHash")

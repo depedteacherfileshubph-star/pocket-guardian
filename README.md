@@ -82,3 +82,12 @@ Safety checks in the app: HTTPS to github.com / githubusercontent.com only; the 
 
 - 1.0.1: first update release, used to test the in-app update.
 - 1.0.0: first signed release.
+
+## What is new in 1.1.0
+
+- Press-count actions: choose what 2, 3, 4... presses do (for example 2 = SMS, 3 = call). Volume keys are drawn as icons.
+- 7-day trial then one-time payment (see docs/LICENSING.md). The SOS button and saved shortcut never lock.
+- Animated opening screen with the tagline "Pocket Guardian - Help is one tap away."
+- Screen-off shortcut fix: plays an inaudible keep-alive track so Android delivers volume keys with the screen off, and shows a live "presses received" counter for diagnosis. Still needs a real-phone test.
+- Update screen and release notes no longer show hosting names or links.
+- Seller tools: PG Key Maker Android app (`keygen` module, never publish) and `tools/LicenseGen.java`.

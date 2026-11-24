@@ -6,4 +6,4 @@ dependencyResolutionManagement {
     repositories { google(); mavenCentral() }
 }
 rootProject.name = "SafeTapSOS"
-include(":app")
+include(":app", ":keygen")

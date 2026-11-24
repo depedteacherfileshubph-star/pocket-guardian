@@ -54,13 +54,14 @@ class SosActivity : ComponentActivity() {
         val cfg = store.loadConfig()
         val contacts = store.loadContacts()
         val source = intent.getStringExtra(EXTRA_SOURCE) ?: "On-screen button"
+        val actions = intent.getIntExtra(EXTRA_ACTIONS, 0).takeIf { it != 0 } ?: cfg.buttonActions
         val lines = mutableStateListOf<Pair<LogLevel, String>>()
         val eng = SosEngine(this) { level, text -> lines.add(level to text) }
         engine = eng
         setContent {
             SafeTapTheme {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    SosScreen(cfg, contacts, eng, lines, source) { finish() }
+                    SosScreen(cfg, contacts, eng, lines, source, actions) { finish() }
                 }
             }
         }
@@ -83,6 +84,7 @@ class SosActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_SOURCE = "source"
+        const val EXTRA_ACTIONS = "actions"
     }
 }
 
@@ -93,6 +95,7 @@ private fun SosScreen(
     engine: SosEngine,
     lines: MutableList<Pair<LogLevel, String>>,
     source: String,
+    actions: Int,
     onClose: () -> Unit,
 ) {
     var phase by remember {
@@ -110,7 +113,7 @@ private fun SosScreen(
             while (secondsLeft > 0) { delay(1000); secondsLeft-- }
             phase = Phase.RUNNING
         } else if (phase == Phase.RUNNING) {
-            result = engine.run(cfg, contacts)
+            result = engine.run(cfg, contacts, actions)
             phase = Phase.DONE
         }
     }
@@ -146,7 +149,7 @@ private fun SosScreen(
             Phase.RUNNING -> {
                 Text("Getting help...", style = MaterialTheme.typography.titleLarge, modifier = live)
                 LogView(lines)
-                if (cfg.alarm && !alarmStopped) BigButton("STOP ALARM", { engine.stopAlarm(); alarmStopped = true }, outlined = true)
+                if (actions and Act.ALARM != 0 && !alarmStopped) BigButton("STOP ALARM", { engine.stopAlarm(); alarmStopped = true }, outlined = true)
                 BigButton("STOP - I'M OK", { cancel() })
             }
             Phase.DONE -> {
@@ -163,7 +166,7 @@ private fun SosScreen(
                 )
                 LogView(lines)
                 if (!ok) Guidance()
-                if (cfg.alarm && !alarmStopped) BigButton("STOP ALARM", { engine.stopAlarm(); alarmStopped = true }, outlined = true)
+                if (actions and Act.ALARM != 0 && !alarmStopped) BigButton("STOP ALARM", { engine.stopAlarm(); alarmStopped = true }, outlined = true)
                 if (!ok) BigButton("TRY AGAIN", { lines.add(LogLevel.INFO to "Trying again..."); result = null; attempt++; phase = Phase.RUNNING }, danger = true)
                 if (engine.smsSentSoFar > 0) AllClearButton(allClearMsg) {
                     scope.launch {

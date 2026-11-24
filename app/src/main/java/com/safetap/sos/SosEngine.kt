@@ -54,18 +54,18 @@ class SosEngine(private val ctx: Context, private val log: (LogLevel, String) ->
     fun stopAlarm() = alarm.stop()
     val alarmPlaying get() = alarm.playing
 
-    suspend fun run(cfg: SosConfig, contacts: List<Contact>): RunResult {
+    suspend fun run(cfg: SosConfig, contacts: List<Contact>, actions: Int): RunResult {
         var sent = 0
         var failed = 0
         var called = false
 
-        preflight(cfg)
-        if (cfg.alarm) {
+        preflight(actions)
+        if (actions and Act.ALARM != 0) {
             if (alarm.start()) log(LogLevel.OK, "Alarm is sounding. Tap \"Stop alarm\" to silence it.")
             else log(LogLevel.WARN, "Couldn't start the alarm sound.")
         }
 
-        if (cfg.sendSms) {
+        if (actions and Act.SMS != 0) {
             when {
                 !Perms.sms(ctx) -> log(LogLevel.ERROR, "Can't send messages: SMS permission is off.")
                 contacts.isEmpty() -> log(LogLevel.ERROR, "Can't send messages: no trusted contacts saved.")
@@ -97,7 +97,7 @@ class SosEngine(private val ctx: Context, private val log: (LogLevel, String) ->
             }
         }
 
-        if (cfg.placeCall) {
+        if (actions and Act.CALL != 0) {
             val cc = contacts.firstOrNull { it.id == cfg.callContactId }
             if (cc == null) log(LogLevel.ERROR, "Can't call: no call contact chosen.")
             else called = placeCall(cc)
@@ -105,9 +105,9 @@ class SosEngine(private val ctx: Context, private val log: (LogLevel, String) ->
         return RunResult(sent, failed, called, alarm.playing)
     }
 
-    private fun preflight(cfg: SosConfig) {
+    private fun preflight(actions: Int) {
         if (DeviceState.airplaneMode(ctx)) log(LogLevel.WARN, "Airplane mode is ON. Turn it off so messages and calls can work.")
-        else if (DeviceState.hasTelephony(ctx) && !DeviceState.simReady(ctx) && (cfg.sendSms || cfg.placeCall))
+        else if (DeviceState.hasTelephony(ctx) && !DeviceState.simReady(ctx) && (actions and (Act.SMS or Act.CALL) != 0))
             log(LogLevel.WARN, "SIM card isn't ready. Messages and calls may fail.")
         if (DeviceState.lowBattery(ctx)) log(LogLevel.WARN, "Battery is low (${DeviceState.batteryPercent(ctx)}%). SOS will still try to run.")
     }

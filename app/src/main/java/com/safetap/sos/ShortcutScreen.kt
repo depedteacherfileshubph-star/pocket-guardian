@@ -32,6 +32,7 @@ fun ShortcutScreen(vm: AppViewModel) {
                 "Then the normal SOS screen opens (over the lock screen) with the same Cancel countdown.",
                 "Volume buttons keep changing the volume as normal.",
                 "Holding a button down counts as one press.",
+                "To receive volume keys with the screen off, Android needs a media player to be 'playing'. The shortcut plays an inaudible silent track for that. Nothing is recorded or sent, and a small media card may appear in your notifications.",
             ).forEach { Text("- $it", style = MaterialTheme.typography.bodyMedium) }
         }
         Section("Honest limits") {
@@ -68,10 +69,23 @@ fun ShortcutScreen(vm: AppViewModel) {
                 if (BgState.running && verified) true else null,
             )
 
+            Section("Is the shortcut receiving your button presses?") {
+                Text("Press a volume button now (screen on). The number should go up each time.", style = MaterialTheme.typography.bodyLarge)
+                Text("Presses received: ${BgState.keysSeen}", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (BgState.audioActive) "Keep-alive audio: running."
+                    else "Keep-alive audio: NOT running. The screen-off shortcut will not work until this says running. Turn the shortcut off and on again.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (BgState.running && BgState.keysSeen == 0) {
+                    Text("If this stays at 0 after pressing, this phone is not sending volume keys to the shortcut at all. In that case the screen-off shortcut can't work on it; use the SOS button.", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+
             Section("Test it with the screen off (nothing is sent)") {
                 Text("1. Tap Start test.", style = MaterialTheme.typography.bodyLarge)
                 Text("2. Press the phone's power button to turn the screen off.", style = MaterialTheme.typography.bodyLarge)
-                Text("3. Press ${cfg.pattern.label} ${cfg.pressCount} times within ${cfg.windowMs / 1000} seconds. Two buzzes mean it worked.", style = MaterialTheme.typography.bodyLarge)
+                Text("3. Press ${cfg.pattern.label} two or more times quickly, then pause. Two buzzes mean it worked.", style = MaterialTheme.typography.bodyLarge)
                 Text("4. Turn the screen on and come back here. You have 60 seconds.", style = MaterialTheme.typography.bodyLarge)
                 Text("Test recognitions so far: ${BgState.testHits}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                 BigButton("Start 60-second test", { ShortcutService.armTest(ctx) }, enabled = BgState.running)

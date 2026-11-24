@@ -25,123 +25,6 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-// ---------------------------------------------------------------- Trigger setup + test
-
-@Composable
-fun TriggerScreen(vm: AppViewModel) {
-    val cfg = vm.config
-    ScreenFrame("Trigger: choose and test", { vm.screen = Screen.SETTINGS }) {
-        Section("How it works") {
-            Text("1. Pick the button pattern.", style = MaterialTheme.typography.bodyLarge)
-            Text("2. Pick how many presses, and how quickly they must happen.", style = MaterialTheme.typography.bodyLarge)
-            Text("3. Practice in the test box below. Nothing is sent during the test.", style = MaterialTheme.typography.bodyLarge)
-            Text(
-                "Important: Android only lets an ordinary app see volume buttons while the app is open on screen " +
-                    "and the phone is awake. It will NOT work with the screen off, on the lock screen, or in other apps. " +
-                    "The Power button cannot be used. The big SOS button and the Quick Settings tile work as backups.",
-                style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold,
-            )
-        }
-
-        Section("Choose the pattern") {
-            ChoiceGroup("Buttons", PatternType.entries, cfg.pattern, { it.label + " - " + it.help }) { p ->
-                vm.updateConfig { it.copy(pattern = p) }
-            }
-            Stepper("Number of presses", cfg.pressCount, Limits.MIN_PRESSES, Limits.MAX_PRESSES) { n ->
-                vm.updateConfig { it.copy(pressCount = n) }
-            }
-            ChoiceGroup("Time window (all presses must fit inside)", Limits.WINDOWS_MS, cfg.windowMs, { "${it / 1000} seconds" }) { w ->
-                vm.updateConfig { it.copy(windowMs = w) }
-            }
-            Text("Tip: 5 presses in 3 seconds is hard to do by accident but easy on purpose. Fewer presses or longer windows cause more accidents.", style = MaterialTheme.typography.bodyMedium)
-            ToggleRow(
-                "Keep screen on while the child screen is open",
-                "Helps the shortcut keep working. Uses more battery. Turns off when the app is closed.",
-                cfg.keepScreenOn,
-            ) { on -> vm.updateConfig { it.copy(keepScreenOn = on) } }
-        }
-
-        Section("Test it (no message, no call)") {
-            Text("Press the volume buttons now: ${cfg.pattern.label}, ${cfg.pressCount} times within ${cfg.windowMs / 1000} seconds.", style = MaterialTheme.typography.bodyLarge)
-            Text("Last button seen: ${vm.lastKey}", style = MaterialTheme.typography.bodyLarge)
-            Text("Presses counted in window: ${vm.testProgress} of ${cfg.pressCount}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
-            if (vm.testHits > 0) StatusBanner("Test passed", "Trigger recognised ${vm.testHits} time(s). Nothing was sent.", true)
-            else StatusBanner("Waiting", "No trigger recognised yet.", null)
-            Text("If no presses are counted, your phone may not report volume keys to apps on this screen. Use the on-screen SOS button instead and see 'Privacy and device limits'.", style = MaterialTheme.typography.bodyMedium)
-            BigButton("Reset test", { vm.resetTest() }, outlined = true)
-        }
-    }
-}
-
-// ---------------------------------------------------------------- SOS actions
-
-@Composable
-fun ActionsScreen(vm: AppViewModel) {
-    val ctx = LocalContext.current
-    val cfg = vm.config
-    // Re-read permission state after any permission result.
-    val smsOk = remember(vm.refresh) { Perms.sms(ctx) }
-    val locOk = remember(vm.refresh) { Perms.location(ctx) }
-    val callOk = remember(vm.refresh) { Perms.call(ctx) }
-
-    ScreenFrame("SOS actions", { vm.screen = Screen.SETTINGS }) {
-        Section("Send a text message (SMS)") {
-            ToggleRow("Send SMS to trusted contacts", "Uses the phone's SIM. Carrier SMS charges may apply.", cfg.sendSms) { on ->
-                vm.updateConfig { it.copy(sendSms = on) }
-            }
-            if (cfg.sendSms) {
-                PermissionRow(
-                    "SMS", "Needed to send the help message from this phone's SIM. Used only when SOS is triggered or you press a test button.",
-                    "Without it the app cannot send help messages; the child screen will say so.",
-                    smsOk, Perms.SMS,
-                ) { vm.refresh++ }
-                OutlinedTextField(
-                    cfg.message, { t -> vm.updateConfig { it.copy(message = t.take(Limits.MAX_MESSAGE)) } },
-                    label = { Text("Help message (${cfg.message.length}/${Limits.MAX_MESSAGE})") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                ToggleRow("Include current location", "Location is looked up once, only when SOS is sent.", cfg.includeLocation) { on ->
-                    vm.updateConfig { it.copy(includeLocation = on) }
-                }
-                if (cfg.includeLocation) PermissionRow(
-                    "Location", "Needed to put a map link in the message. Checked once when SOS is sent. Never tracked in the background.",
-                    "Messages will say 'Location unavailable' but will still be sent.",
-                    locOk, Perms.LOCATION,
-                ) { vm.refresh++ }
-            }
-        }
-
-        Section("Place a phone call") {
-            ToggleRow("Call one trusted contact", null, cfg.placeCall) { on -> vm.updateConfig { it.copy(placeCall = on) } }
-            if (cfg.placeCall) {
-                if (vm.contacts.isEmpty()) Text("Add a contact first (Trusted contacts).", style = MaterialTheme.typography.bodyLarge)
-                else ChoiceGroup("Who to call", vm.contacts, vm.contacts.firstOrNull { it.id == cfg.callContactId }, { it?.name ?: "" }) { c ->
-                    if (c != null) vm.updateConfig { it.copy(callContactId = c.id) }
-                }
-                PermissionRow(
-                    "Phone calls", "Needed to start the call straight away. Used only when SOS is triggered.",
-                    "The dialer will still open with the number filled in, but someone must press Call.",
-                    callOk, Perms.CALL,
-                ) { vm.refresh++ }
-            }
-        }
-
-        Section("Alarm sound") {
-            ToggleRow("Play a loud alarm", "Uses the phone's alarm sound at full alarm volume until stopped. The child can stop it with a big button.", cfg.alarm) { on ->
-                vm.updateConfig { it.copy(alarm = on) }
-            }
-        }
-
-        Section("Cancel time for accidents") {
-            ChoiceGroup("Seconds before help is sent", Limits.GRACE_SECONDS, cfg.graceSeconds,
-                { if (it == 0) "0 - send immediately, no cancel time" else "$it seconds" }) { g ->
-                vm.updateConfig { it.copy(graceSeconds = g) }
-            }
-            Text("During this time the child sees a big Cancel button and a Send-now button. Pick 0 if instant help matters more than avoiding accidents.", style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-
 // ---------------------------------------------------------------- Contacts + tests
 
 @Composable
@@ -300,7 +183,7 @@ fun AboutScreen(vm: AppViewModel) {
     ScreenFrame("Privacy and device limits", { vm.screen = Screen.SETTINGS }) {
         Section("Privacy") {
             listOf(
-                "Stored on this phone only: your settings, trusted contacts, and a scrambled (hashed) PIN. Nothing is uploaded and there are no accounts, ads or analytics. The only internet use is the optional update check/download from GitHub (App updates), which sends no personal data.",
+                "Stored on this phone only: your settings, trusted contacts, and a scrambled (hashed) PIN. Nothing is uploaded and there are no accounts, ads or analytics. The only internet use is the optional update check/download (App updates), which sends no personal data.",
                 "Location: read once when SOS is sent, put into the message, then discarded. Never tracked, never stored.",
                 "No audio is recorded. The app is never hidden: it has a normal icon, a visible SOS screen, and a visible countdown.",
                 "Messages go through the phone's normal SMS system, so your mobile carrier can see them like any other text.",

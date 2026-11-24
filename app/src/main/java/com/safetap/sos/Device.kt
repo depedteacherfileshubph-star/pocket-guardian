@@ -6,8 +6,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.location.LocationManager
-import android.os.Build
 import android.os.BatteryManager
+import android.os.Build
 import android.provider.Settings
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
@@ -81,8 +81,8 @@ data class Readiness(val level: ReadyLevel, val headline: String, val issues: Li
 
 /**
  * Honest status: only says "ready" when everything the chosen actions need is in place.
- * Note the volume-button shortcut itself only works while the app is open and in front;
- * the on-screen SOS button works whenever the app is open.
+ * The volume shortcut only works while the app is open, unless the optional screen-off
+ * shortcut is on and tested; the on-screen SOS button works whenever the app is open.
  */
 fun evaluateReadiness(c: Context, cfg: SosConfig, contacts: List<Contact>): Readiness {
     if (!cfg.enabled) {
@@ -92,29 +92,37 @@ fun evaluateReadiness(c: Context, cfg: SosConfig, contacts: List<Contact>): Read
     fun block(t: String) = issues.add(Issue(t, true))
     fun warn(t: String) = issues.add(Issue(t, false))
 
-    if (!cfg.sendSms && !cfg.placeCall && !cfg.alarm) block("No SOS action is chosen.")
+    val used = cfg.usedActions
+    val usesSms = used and Act.SMS != 0
+    val usesCall = used and Act.CALL != 0
+
+    if (used == 0) block("No SOS action is chosen.")
+    if (cfg.activeCounts.isEmpty()) warn("No press count is set up, so the volume shortcut does nothing. The SOS button still works.")
+    if (cfg.activeCounts.any { it <= Limits.RISKY_AT_OR_BELOW }) {
+        warn("A ${cfg.activeCounts.min()}-press shortcut is easy to trigger by accident with normal volume use. The cancel countdown protects against false alarms.")
+    }
     if (!DeviceState.hasTelephony(c)) block("This device has no phone/SMS hardware, so it can't send SMS or call.")
-    if (cfg.sendSms) {
+    if (usesSms) {
         if (contacts.isEmpty()) block("Add at least one trusted contact.")
         else if (contacts.none { it.verified }) block("No trusted contact has been tested yet.")
         else if (contacts.any { !it.verified }) warn("Some contacts have not been tested.")
         if (!Perms.sms(c)) block("SMS permission is off, so messages can't be sent.")
     }
-    if (cfg.placeCall) {
+    if (usesCall) {
         val cc = contacts.firstOrNull { it.id == cfg.callContactId }
         if (cc == null) block("Choose who to call.")
         else if (!cc.verified) warn("The call contact has not been tested.")
         if (!Perms.call(c)) warn("Phone permission is off: the call screen will open but someone must tap Call.")
     }
-    if ((cfg.sendSms) && cfg.includeLocation && !Perms.location(c)) warn("Location permission is off: messages will say location is unavailable.")
-    if ((cfg.sendSms) && cfg.includeLocation && Perms.location(c) && !DeviceState.locationServiceOn(c)) warn("Phone location is switched off: messages may lack a location.")
+    if (usesSms && cfg.includeLocation && !Perms.location(c)) warn("Location permission is off: messages will say location is unavailable.")
+    if (usesSms && cfg.includeLocation && Perms.location(c) && !DeviceState.locationServiceOn(c)) warn("Phone location is switched off: messages may lack a location.")
     if (cfg.backgroundMode) {
         if (!BgState.running) warn("Screen-off shortcut is stopped. Open Pocket Guardian to restart it.")
         else if (!Store(c).bgVerified) warn("Screen-off shortcut has not passed a screen-off test yet.")
         if (!Perms.notifications(c)) warn("Notifications are off, so the screen-off shortcut and its SOS alert can't be shown.")
     }
     if (DeviceState.airplaneMode(c)) warn("Airplane mode is on: SMS and calls won't work.")
-    else if ((cfg.sendSms || cfg.placeCall) && DeviceState.hasTelephony(c) && !DeviceState.simReady(c)) warn("SIM card is not ready: SMS and calls may fail.")
+    else if ((usesSms || usesCall) && DeviceState.hasTelephony(c) && !DeviceState.simReady(c)) warn("SIM card is not ready: SMS and calls may fail.")
     if (DeviceState.lowBattery(c)) warn("Battery is low: please charge the phone.")
 
     return when {

@@ -8,12 +8,18 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioAttributes
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioTrack
+import android.media.MediaMetadata
 import android.media.VolumeProvider
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.os.VibrationEffect
@@ -32,6 +38,10 @@ import androidx.core.app.ServiceCompat
 object BgState {
     var running by mutableStateOf(false)
     var testHits by mutableIntStateOf(0)
+    /** Volume presses delivered to the service. Shows the guardian whether keys reach it at all. */
+    var keysSeen by mutableIntStateOf(0)
+    /** True when the silent keep-alive audio track is playing (needed for keys to arrive with the screen off). */
+    var audioActive by mutableStateOf(false)
 
     /** Number of Pocket Guardian screens currently in front. While > 0 the service stays out of the way. */
     @Volatile var uiVisible = 0
@@ -51,31 +61,83 @@ object BgState {
  */
 class ShortcutService : Service() {
     private var session: MediaSession? = null
+    private var keepAlive: AudioTrack? = null
     private lateinit var detector: TriggerDetector
+    private val handler = Handler(Looper.getMainLooper())
     private var lastEventAt = 0L
     @Volatile private var testUntil = 0L
+
+    private val pollTask = Runnable {
+        detector.poll(SystemClock.uptimeMillis())?.let { onSeries(it) }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         createChannels()
-        val cfg = Store(this).loadConfig()
-        detector = TriggerDetector(cfg.sequence, cfg.windowMs)
+        val store = Store(this)
+        val cfg = store.loadConfig()
+        detector = TriggerDetector(cfg.pattern, cfg.activeCounts, cfg.windowMs)
         val n = statusNotification("Screen-off shortcut is ON. Volume buttons work with the screen off.")
         if (Build.VERSION.SDK_INT >= 29) {
             ServiceCompat.startForeground(this, ID_STATUS, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
         } else startForeground(ID_STATUS, n)
+
+        // Licensed guardian feature: it does not run after the free trial ends without activation.
+        if (License.isExpired(this, store)) {
+            stopSelf()
+            return
+        }
 
         val provider = object : VolumeProvider(VOLUME_CONTROL_RELATIVE, 100, 50) {
             override fun onAdjustVolume(direction: Int) = handleVolume(direction)
         }
         session = MediaSession(this, "PocketGuardianShortcut").apply {
             setPlaybackToRemote(provider)
+            setMetadata(
+                MediaMetadata.Builder()
+                    .putString(MediaMetadata.METADATA_KEY_TITLE, "Pocket Guardian screen-off shortcut")
+                    .build()
+            )
             setPlaybackState(PlaybackState.Builder().setState(PlaybackState.STATE_PLAYING, 0, 1f).setActions(0).build())
             isActive = true
         }
+        startKeepAliveAudio()
+        BgState.keysSeen = 0
         BgState.running = true
+    }
+
+    /**
+     * With the screen off, Android only hands volume keys to a media session while the music
+     * stream is actually playing. So the service plays an inaudible looping track (about 1/32768
+     * of full scale, far below hearing) purely to keep that route open. No audio is recorded or
+     * sent anywhere; this plays nothing the user can hear. A media card for the shortcut may show
+     * in the notification shade; that is expected and visible by design.
+     */
+    private fun startKeepAliveAudio() {
+        BgState.audioActive = runCatching {
+            val rate = 8000
+            val data = ShortArray(rate) { if (it % 2 == 0) 1 else -1 }
+            val t = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build()
+                )
+                .setBufferSizeInBytes(data.size * 2)
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .build()
+            t.write(data, 0, data.size)
+            t.setLoopPoints(0, data.size, -1)
+            t.play()
+            keepAlive = t
+            true
+        }.getOrDefault(false)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -96,6 +158,7 @@ class ShortcutService : Service() {
 
     private fun handleVolume(direction: Int) {
         if (direction == 0) return
+        BgState.keysSeen++
         // Keep normal volume behaviour: apply the key to whatever stream Android would have changed.
         runCatching {
             (getSystemService(AUDIO_SERVICE) as AudioManager).adjustSuggestedStreamVolume(
@@ -112,12 +175,22 @@ class ShortcutService : Service() {
         val cfg = Store(this).loadConfig()
         val testing = now < testUntil
         if (!cfg.enabled && !testing) return
-        detector.configureIfChanged(cfg.sequence, cfg.windowMs)
+        // While testing, any count 2..8 is recognised so the guardian can prove the keys arrive.
+        val counts = if (testing) (Limits.MIN_PRESSES..Limits.MAX_PRESSES).toSet() else cfg.activeCounts
+        detector.configureIfChanged(cfg.pattern, counts, cfg.windowMs)
         val key = if (direction > 0) KeyEvent.KEYCODE_VOLUME_UP else KeyEvent.KEYCODE_VOLUME_DOWN
-        if (detector.onKeyDown(key, now)) onTrigger(testing, cfg)
+        handler.removeCallbacks(pollTask)
+        val immediate = detector.onKeyDown(key, now)
+        if (immediate != null) onSeries(immediate)
+        else if (detector.progress > 0) handler.postDelayed(pollTask, detector.gapMs + 40)
     }
 
-    private fun onTrigger(testing: Boolean, cfg: SosConfig) {
+    private fun onSeries(count: Int) {
+        val now = SystemClock.uptimeMillis()
+        val testing = now < testUntil
+        val cfg = Store(this).loadConfig()
+        val actions = cfg.mappings[count] ?: 0
+        if (!testing && actions == 0) return
         vibrate() // tactile confirmation: the child can feel it registered with the screen off
         if (testing) {
             testUntil = 0
@@ -125,13 +198,14 @@ class ShortcutService : Service() {
             val screenOff = !(getSystemService(POWER_SERVICE) as PowerManager).isInteractive
             if (screenOff) Store(this).bgVerified = true
             updateStatus(
-                if (screenOff) "Test passed with the screen off. Nothing was sent."
+                if (screenOff) "Test passed with the screen off ($count presses). Nothing was sent."
                 else "Recognised, but the screen was on. Repeat the test with the screen off."
             )
             return
         }
         val open = Intent(this, SosActivity::class.java)
             .putExtra(SosActivity.EXTRA_SOURCE, "Volume buttons (screen off)")
+            .putExtra(SosActivity.EXTRA_ACTIONS, actions)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val pi = PendingIntent.getActivity(this, 1, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = NotificationCompat.Builder(this, CH_ALERT)
@@ -193,8 +267,12 @@ class ShortcutService : Service() {
     }
 
     override fun onDestroy() {
+        handler.removeCallbacks(pollTask)
         runCatching { session?.isActive = false; session?.release() }
+        runCatching { keepAlive?.stop(); keepAlive?.release() }
+        keepAlive = null
         session = null
+        BgState.audioActive = false
         BgState.running = false
         super.onDestroy()
     }

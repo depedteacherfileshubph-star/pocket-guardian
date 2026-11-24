@@ -3,47 +3,75 @@ package com.safetap.sos
 import android.view.KeyEvent
 
 /**
- * Pure logic so it can be unit-tested. Feed it ACTION_DOWN events with repeatCount == 0
- * (a held key must not count as several presses).
+ * Counts a series of presses and reports how many there were once the series is over.
+ *
+ * A series ends when (a) the highest mapped count is reached (fires at once, no waiting), or
+ * (b) the user pauses for [gapMs] after the last press (call [poll]). Only counts in
+ * [counts] are reported; anything else is ignored.
+ *
+ * Pure logic so it can be unit-tested. Feed it key-DOWN events with repeatCount == 0.
  */
-class TriggerDetector(private var sequence: List<Int>, private var windowMs: Long) {
-    private val events = ArrayDeque<Pair<Int, Long>>()
+class TriggerDetector(
+    private var pattern: PatternType,
+    private var counts: Set<Int>,
+    private var windowMs: Long,
+    val gapMs: Long = Limits.GAP_MS,
+) {
+    private val series = ArrayList<Pair<Int, Long>>()
+    private val maxCount get() = counts.maxOrNull() ?: 0
 
-    /** How many correct presses are currently inside the time window (for UI feedback). */
-    var progress: Int = 0
-        private set
+    /** Number of correct presses so far in the current series (for UI feedback). */
+    val progress: Int get() = series.size
 
-    fun configure(sequence: List<Int>, windowMs: Long) {
-        this.sequence = sequence
+    /** Time of the last press, or -1 if no series is in progress. */
+    val lastPressAt: Long get() = series.lastOrNull()?.second ?: -1L
+
+    fun configure(pattern: PatternType, counts: Set<Int>, windowMs: Long) {
+        this.pattern = pattern
+        this.counts = counts
         this.windowMs = windowMs
         reset()
     }
 
-    /** Re-applies settings only if they differ, so in-progress presses are not lost. */
-    fun configureIfChanged(sequence: List<Int>, windowMs: Long) {
-        if (sequence != this.sequence || windowMs != this.windowMs) configure(sequence, windowMs)
-    }
-
-    fun reset() {
-        events.clear()
-        progress = 0
-    }
-
-    /** @return true exactly when the configured sequence has just been completed in the window. */
-    fun onKeyDown(keyCode: Int, timeMs: Long): Boolean {
-        if (keyCode != KeyEvent.KEYCODE_VOLUME_DOWN && keyCode != KeyEvent.KEYCODE_VOLUME_UP) return false
-        if (sequence.isEmpty()) return false
-        events.addLast(keyCode to timeMs)
-        // The whole sequence must fit inside the window, measured from its first press.
-        while (events.isNotEmpty() && timeMs - events.first().second > windowMs) events.removeFirst()
-        while (events.size > sequence.size) events.removeFirst()
-
-        val keys = events.map { it.first }
-        progress = if (keys == sequence.take(keys.size)) keys.size else 0
-        if (keys == sequence) {
-            reset()
-            return true
+    fun configureIfChanged(pattern: PatternType, counts: Set<Int>, windowMs: Long) {
+        if (pattern != this.pattern || counts != this.counts || windowMs != this.windowMs) {
+            configure(pattern, counts, windowMs)
         }
-        return false
+    }
+
+    fun reset() = series.clear()
+
+    /** @return the press count if the series just reached the highest mapped count, else null. */
+    fun onKeyDown(keyCode: Int, timeMs: Long): Int? {
+        if (keyCode != KeyEvent.KEYCODE_VOLUME_DOWN && keyCode != KeyEvent.KEYCODE_VOLUME_UP) return null
+        if (counts.isEmpty()) return null
+
+        // A pause, or a series that has run too long, starts a new series.
+        if (series.isNotEmpty() &&
+            (timeMs - series.last().second > gapMs || timeMs - series.first().second > windowMs)
+        ) series.clear()
+
+        val expected = pattern.sequence(Limits.MAX_PRESSES)
+        if (keyCode != expected[series.size]) {
+            // Wrong key for this position: start over, counting this press as a possible first press.
+            series.clear()
+            if (keyCode != expected[0]) return null
+        }
+        series.add(keyCode to timeMs)
+
+        if (series.size >= maxCount) {
+            val n = series.size
+            series.clear()
+            return if (n in counts) n else null
+        }
+        return null
+    }
+
+    /** Call after [gapMs] of quiet. @return the press count of the finished series, if it is mapped. */
+    fun poll(nowMs: Long): Int? {
+        if (series.isEmpty() || nowMs - series.last().second < gapMs) return null
+        val n = series.size
+        series.clear()
+        return if (n in counts) n else null
     }
 }
