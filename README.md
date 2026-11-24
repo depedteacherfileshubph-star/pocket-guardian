@@ -77,3 +77,8 @@ Safety checks in the app: HTTPS to github.com / githubusercontent.com only; the 
   - `ShortcutService.kt`, `ShortcutScreen.kt` - optional screen-off shortcut (visible foreground service)
   - `Updater.kt`, `UpdateScreen.kt` - guardian-approved GitHub updates
 - `docs/TEST_PLAN.md`, `docs/PRIVACY_AND_PERMISSIONS.md`
+
+## Changelog
+
+- 1.0.1: first update release, used to test the in-app update.
+- 1.0.0: first signed release.
