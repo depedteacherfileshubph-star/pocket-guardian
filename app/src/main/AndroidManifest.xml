@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Each permission is requested only in context, only when the guardian turns on the
+         matching feature. See docs/PRIVACY_AND_PERMISSIONS.md. -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- Used ONLY by the guardian-approved update check/download from GitHub (Updater.kt).
+         No SOS data ever goes over the internet. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Lets the app hand a verified update APK to Android's installer (user must confirm). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- Optional screen-off shortcut: visible foreground service (media-session type),
+         its notification, a full-screen SOS alert, and a buzz to confirm recognition. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Phones only; the app still installs on tablets but explains SOS can't work there. -->
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+
+    <application
+        tools:ignore="UnusedAttribute"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.SafeTap">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- The SOS screen is always visible to the user: it shows a countdown, status and Cancel.
+             It may show over the lock screen so the child can see/cancel without unlocking. -->
+        <activity
+            android:name=".SosActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden|fontScale|uiMode|smallestScreenSize|screenLayout"
+            android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
+
+        <service
+            android:name=".ShortcutService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- Optional Quick Settings tile. The guardian/child must add it manually. -->
+        <service
+            android:name=".SosTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_launcher"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>
